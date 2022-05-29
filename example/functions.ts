@@ -8,14 +8,20 @@ interface Func {
   name: string;
   filePath: string;
   params: Map<String, String>;
-  createdAt: string;
-  lastUsedAt: string;
+  createdAt: number;
+  lastUsedAt: number;
   createdBy: String;
   worker: any | undefined;
+  port: Number;
 }
 
 const workersBasePath = join(Deno.cwd(), 'deno-swagger' + SEP + 'uploads');
 const functions = new Map<string, Func>();
+
+// load data from config files 
+const fnStr:string = await Deno.readTextFile(join(workersBasePath, "worker-1_conf.json"));
+const fn:Func = await JSON.parse(fnStr);
+functions.set(fn.id, fn);
 
 const functionRouter = new Router()
   .get("/functions", (context) => {
@@ -30,10 +36,17 @@ const functionRouter = new Router()
   })
   .get("/functions/:id/exec", async (context) => {
     if (context.params && functions.has(context.params.id)) {
-      const fn: Func = functions.get(context.params.id);
-      if(fn.worker === undefined){  // initiate new worker here 
+      const fn: Func | undefined = functions.get(context.params.id);
+      if(fn && fn.worker === undefined){  // initiate new worker here 
         console.log("initiating worker");
-        fn.worker = new Worker(new URL("./worker.js", import.meta.url).href, { type: "module" });
+        fn.worker = new Worker(
+          new URL("file://"+fn.filePath, import.meta.url).href, {
+            type: "module",
+            deno: {
+              namespace: true,
+            }
+          }
+        );
       }
       // send an event to worker 
       context.response.body = "Function executed";
@@ -63,6 +76,17 @@ const functionRouter = new Router()
 
     if (func) {
       context.assert(func.id && typeof func.id === "string", Status.BadRequest);
+      context.assert(func.filePath && typeof func.filePath === "string", Status.BadRequest);
+
+      func.name = func.id;
+      func.filePath = join(workersBasePath, func.filePath);
+      // TODO: add worker exists check
+      func.port = Math.floor(Math.random() * (65000 - 2000) + 2000);
+      func.createdAt = Math.floor(Date.now()/1000);
+      func.createdBy = 'Admin';
+      const jsonStr:string = await JSON.stringify(func);
+      await Deno.writeTextFile(join(workersBasePath, func.id+'_conf.json'), jsonStr);
+
       functions.set(func.id, func as Func);
       context.response.status = Status.OK;
       context.response.body = func;
