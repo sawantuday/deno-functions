@@ -1,7 +1,8 @@
 import { Router, RouterContext, Context, Status } from "https://deno.land/x/oak/mod.ts";
-import { SEP, join } from "https://deno.land/std@0.140.0/path/mod.ts";
-import * as log from "https://deno.land/std@0.140.0/log/mod.ts";
+import { SEP, join, toFileUrl } from "https://deno.land/std@0.140.0/path/mod.ts";
+// import * as log from "https://deno.land/std@0.140.0/log/mod.ts";
 import { notFound } from "./helper.ts";
+import { existsSync } from "https://deno.land/std@0.140.0/fs/mod.ts";
 
 interface Func {
   id: string;
@@ -19,9 +20,13 @@ const workersBasePath = join(Deno.cwd(), 'deno-swagger' + SEP + 'uploads');
 const functions = new Map<string, Func>();
 
 // load data from config files 
-const fnStr:string = await Deno.readTextFile(join(workersBasePath, "worker-1_conf.json"));
-const fn:Func = await JSON.parse(fnStr);
-functions.set(fn.id, fn);
+const fnStr:string = await Deno.readTextFile(join(workersBasePath, "6ba5d480-735f-4ae8-8084-7c8505435261", "conf.json"));
+const fnc:Func = await JSON.parse(fnStr);
+functions.set(fnc.id, fnc);
+
+// const fnStr5:string = await Deno.readTextFile(join(workersBasePath, "worker-2_conf.json"));
+// const fn5:Func = await JSON.parse(fnStr5);
+// functions.set(fn5.id, fn5);
 
 const functionRouter = new Router()
   .get("/functions", (context) => {
@@ -39,17 +44,39 @@ const functionRouter = new Router()
       const fn: Func | undefined = functions.get(context.params.id);
       if(fn && fn.worker === undefined){  // initiate new worker here 
         console.log("initiating worker");
-        fn.worker = new Worker(
-          new URL("file://"+fn.filePath, import.meta.url).href, {
-            type: "module",
+        const path:URL = toFileUrl(join(workersBasePath, fn.id, "server.ts"));
+        fn.worker = new Worker(path.href, { type: "module",
             deno: {
               namespace: true,
+              permissions: {
+                read: true,
+                run: false,
+                write: false,
+                hrtime: false,
+                net: true,
+                env: false
+              }
             }
           }
         );
       }
-      // send an event to worker 
-      context.response.body = "Function executed";
+      // context.response.body = "executed";
+      // send/proxy an event to worker 
+      if(fn && fn.port){
+        const headers = context.request.headers;
+        // headers["X-forwarded-for"] = "http://localhost:8000/"; // TODO; this is not working 
+        const res:Response = await fetch("http://localhost:"+fn.port, {
+          headers:headers,
+          // body: context.request.body,
+          method: context.request.method
+        });
+        context.response.body = res.body;
+        // context.response.headers = res.headers;
+        // context.response.status = res.status;
+        // context.response.type = res.type; // TODO: add query params as well 
+      } else {
+        context.throw(Status.NotFound, "Function not found")
+      }
     } else {
       context.throw(Status.NotFound, "Function not found")
     }
@@ -75,17 +102,30 @@ const functionRouter = new Router()
     }
 
     if (func) {
-      context.assert(func.id && typeof func.id === "string", Status.BadRequest);
+      // context.assert(func.id && typeof func.id === "string", Status.BadRequest);
       context.assert(func.filePath && typeof func.filePath === "string", Status.BadRequest);
 
-      func.name = func.id;
-      func.filePath = join(workersBasePath, func.filePath);
-      // TODO: add worker exists check
+      func.id = crypto.randomUUID();
+      func.name = func.name || func.id;
       func.port = Math.floor(Math.random() * (65000 - 2000) + 2000);
       func.createdAt = Math.floor(Date.now()/1000);
       func.createdBy = 'Admin';
       const jsonStr:string = await JSON.stringify(func);
-      await Deno.writeTextFile(join(workersBasePath, func.id+'_conf.json'), jsonStr);
+      console.log(join(workersBasePath, func.id));
+      if(existsSync(join(workersBasePath, func.id))){
+        context.throw(Status.InternalServerError, "Function already exists");
+      }
+
+      Deno.mkdirSync(join(workersBasePath, func.id));
+      Deno.copyFileSync(
+        join(workersBasePath, "function-1", "server.ts"), 
+        join(workersBasePath, func.id, "server.ts")
+      );
+      Deno.copyFileSync(
+        join(workersBasePath, func.filePath), 
+        join(workersBasePath, func.id, func.filePath)
+      );
+      await Deno.writeTextFile(join(workersBasePath, func.id, 'conf.json'), jsonStr);
 
       functions.set(func.id, func as Func);
       context.response.status = Status.OK;
@@ -98,6 +138,10 @@ const functionRouter = new Router()
   })
   .delete("/functions/:id", (context) =>{
     if (context.params && functions.has(context.params.id)) {
+      const fn: Func|undefined = functions.get(context.params.id);
+      if(fn && fn.worker != undefined){
+        fn.worker.terminate();
+      }
       const status = functions.delete(context.params.id);
       context.response.body = {"status": status}
     } else {

@@ -1,0 +1,8 @@
+{
+    "id": "worker-1",
+    "filePath": "worker.ts",
+    "name": "worker-1",
+    "port": 34798,
+    "createdAt": 1653809901,
+    "createdBy": "Admin"
+}

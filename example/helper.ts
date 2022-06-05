@@ -6,6 +6,19 @@ import {
   yellow,
 } from "https://deno.land/std@0.131.0/fmt/colors.ts";
 
+// TODO: move this to types.d
+// interface Func {
+//   id: string;
+//   name: string;
+//   filePath: string;
+//   params: Map<String, String>;
+//   createdAt: number;
+//   lastUsedAt: number;
+//   createdBy: String;
+//   worker: any | undefined;
+//   port: Number;
+// }
+
 function notFound(context: Context) {
   context.response.status = Status.NotFound;
   context.response.body =
